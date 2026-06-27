@@ -4,53 +4,41 @@ require('dotenv').config();
 let redis;
 
 try {
-  redis = new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT) || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
+  const opts = {
     retryStrategy: (times) => {
-      if (times > 3) {
-        console.warn('Redis unavailable, caching disabled');
-        return null;
-      }
-      return Math.min(times * 100, 3000);
+      if (times > 3) { console.warn('Redis unavailable'); return null; }
+      return Math.min(times * 200, 3000);
     },
     lazyConnect: true,
-  });
+    tls: process.env.REDIS_URL ? {} : undefined,
+  };
+
+  redis = process.env.REDIS_URL
+    ? new Redis(process.env.REDIS_URL, opts)
+    : new Redis({ host: process.env.REDIS_HOST || 'localhost', port: parseInt(process.env.REDIS_PORT) || 6379, ...opts });
 
   redis.on('connect', () => console.log('✅ Redis connected'));
-  redis.on('error', (err) => console.warn('Redis error:', err.message));
+  redis.on('error',   (e) => console.warn('Redis:', e.message));
 } catch (e) {
   console.warn('Redis init failed, running without cache');
 }
 
-// Cache helpers
 const cache = {
   get: async (key) => {
     if (!redis) return null;
-    try {
-      const data = await redis.get(key);
-      return data ? JSON.parse(data) : null;
-    } catch { return null; }
+    try { const d = await redis.get(key); return d ? JSON.parse(d) : null; } catch { return null; }
   },
-  set: async (key, value, ttlSeconds = 300) => {
+  set: async (key, value, ttl = 300) => {
     if (!redis) return;
-    try {
-      await redis.setex(key, ttlSeconds, JSON.stringify(value));
-    } catch { /* silent */ }
+    try { await redis.setex(key, ttl, JSON.stringify(value)); } catch {}
   },
   del: async (...keys) => {
     if (!redis) return;
-    try {
-      await redis.del(...keys);
-    } catch { /* silent */ }
+    try { await redis.del(...keys); } catch {}
   },
   delPattern: async (pattern) => {
     if (!redis) return;
-    try {
-      const keys = await redis.keys(pattern);
-      if (keys.length) await redis.del(...keys);
-    } catch { /* silent */ }
+    try { const keys = await redis.keys(pattern); if (keys.length) await redis.del(...keys); } catch {}
   },
 };
 
